@@ -1,90 +1,94 @@
 # Cell-Type-Resolved Analysis of Alzheimer's Disease Brain Tissue (snRNA-seq)
 
-A single-nucleus RNA-seq analysis pipeline applied to real published Alzheimer's
-disease brain tissue, built around a specific methodological question: when the
-biological unit of replication is a *donor* (or, in this dataset, a *pooled pair
-of donors*), what does it take to draw statistically defensible conclusions —
-rather than the inflated, easily-overturned "significance" you get from treating
-every individual cell as an independent replicate?
+A single-nucleus RNA-seq pipeline built on real, published Alzheimer's disease brain
+tissue. The question driving most of the design choices here: when your actual unit
+of biological replication is a donor (or in this dataset, a pooled pair of donors),
+what do you have to do differently to get statistically defensible results, instead
+of the inflated significance you get from treating every individual cell as its own
+independent replicate.
 
 ## Data
 
-[GSE138852](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE138852) —
-Chew, Grubman et al., *"A single-cell atlas of the human cortex reveals drivers
-of transcriptional changes in Alzheimer's disease in specific cell
-subpopulations"* (entorhinal cortex, 6 AD and 6 control donors, snRNA-seq,
-10x Genomics).
+[GSE138852](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE138852), from
+Chew, Grubman et al., "A single-cell atlas of the human cortex reveals drivers of
+transcriptional changes in Alzheimer's disease in specific cell subpopulations"
+(entorhinal cortex, 6 AD and 6 control donors, snRNA-seq, 10x Genomics).
 
-**Important caveat about replication structure**, discovered while building
-this pipeline (not stated up front in the processed file): the 12 donors were
+**A caveat about replication structure**, found partway through building this
+pipeline and not obvious from the processed file alone: the 12 donors were
 sequenced as 6 pooled libraries of 2 individuals each, with no genotype-based
-demultiplexing available in the processed data. This means the true unit of
-independent replication available to us is the **library** (n=6: 3 AD, 3
-control), not the individual (n=12). Every statistical step in this pipeline —
-differential expression and classification alike — is built around that
-constraint rather than around the more optimistic (and incorrect) assumption
-of 12 independent replicates.
+demultiplexing available in the processed data. That means the real unit of
+independent replication available here is the library (n=6: 3 AD, 3 control),
+not the individual (n=12). Every statistical step below, differential expression
+and classification alike, is built around that constraint rather than the more
+convenient but wrong assumption of 12 independent replicates.
 
 ## Pipeline
 
-1. **QC** (`scripts/run_qc_normalize.py`) — the deposited data is already a
-   pre-filtered "high quality nuclei" set (13,214 nuclei; minimum genes-per-nucleus
-   is 274, never near zero), so this step layers additional, more targeted QC on
-   top: a 5% mitochondrial-read ceiling (appropriate for *nuclear*, not whole-cell,
-   RNA — nuclei shouldn't contain much mitochondrial RNA at all) combined with the
-   original authors' own doublet/unassigned-nucleus calls. Removes 1,398 nuclei
-   (10.6%), leaving 11,816 for analysis.
+1. **QC** (`scripts/run_qc_normalize.py`). The deposited data is already a
+   pre-filtered "high quality nuclei" set (13,214 nuclei, minimum genes per
+   nucleus is 274, never close to zero), so this step adds a second, more
+   targeted layer of QC on top: a 5% mitochondrial-read ceiling (appropriate
+   for nuclear RNA specifically, since nuclei shouldn't contain much
+   mitochondrial RNA at all) combined with the original authors' own doublet
+   and unassigned-nucleus calls. Removes 1,398 nuclei (10.6%), leaving 11,816
+   for analysis.
 
-2. **Clustering & annotation** (`scripts/run_clustering.py`) — Leiden clustering
-   on the top 2,000 highly variable genes (40 PCs), followed by marker-gene-set
-   scoring per cluster to assign cell types, with no dependency on any
-   internet-hosted reference model. Validated directly against the original
-   authors' manual cell-type calls: **98.3% overall agreement**. The one
-   consistent weak point: endothelial cells (<1% of all nuclei) were mostly
-   absorbed into the oligodendrocyte cluster rather than forming their own group
-   — a known limitation of unsupervised clustering on rare populations, and
-   excluded from the differential expression step below as a result (too few
-   cells per library to build a reliable pseudobulk profile).
+2. **Clustering and annotation** (`scripts/run_clustering.py`). Leiden
+   clustering on the top 2,000 highly variable genes (40 PCs), then marker
+   gene set scoring per cluster to assign cell types, with no dependency on
+   any internet-hosted reference model. Checked directly against the original
+   authors' manual cell-type calls: 98.3% overall agreement. The one
+   consistent weak point is endothelial cells (under 1% of all nuclei), which
+   mostly got absorbed into the oligodendrocyte cluster instead of forming
+   their own group. That's a known limitation of unsupervised clustering on
+   rare populations, and it's why endothelial cells are excluded from the
+   differential expression step below (too few cells per library to build a
+   reliable pseudobulk profile).
 
-3. **Pseudobulk differential expression** (`scripts/run_pseudobulk_de.py`) —
-   per cell type, raw counts are summed per library (not per cell) before
-   running DESeq2, specifically to avoid the well-documented false-discovery
-   inflation that comes from treating thousands of cells from the same 2 donors
-   as independent replicates (Squair et al. 2021, *Nat. Commun.*). Selected
-   findings from the real 3-vs-3 library comparison:
-   - **Astrocytes** (202 significant genes, padj<0.05): GFAP up in AD
-     (log2FC=2.07, padj≈0) — the classic marker of reactive astrogliosis,
-     recovered here with no prior information fed into the model.
-   - **Microglia** (27 significant genes): SPP1 significantly elevated — a
+3. **Pseudobulk differential expression** (`scripts/run_pseudobulk_de.py`).
+   For each cell type, raw counts are summed per library, not per cell,
+   before running DESeq2. This specifically avoids the false-discovery
+   inflation that comes from treating thousands of cells from the same 2
+   donors as independent replicates (Squair et al. 2021, *Nat. Commun.*). A
+   few findings from the real 3-vs-3 library comparison:
+
+   - Astrocytes (202 significant genes at padj<0.05): GFAP up in AD
+     (log2FC=2.07, padj close to 0). That's the classic marker of reactive
+     astrogliosis, and it came out of the model with no prior information
+     fed in.
+   - Microglia (27 significant genes): SPP1 significantly elevated, a
      well-known disease-associated-microglia marker from the mouse
-     neurodegeneration literature, showing up unprompted in real human tissue.
-   - **FKBP5** upregulated independently across three separate cell types
-     (oligodendrocyte, OPC, microglia) — FKBP5/glucocorticoid signaling has
-     documented links to tau pathology in AD.
-   - **Neurons** showed a much weaker signal (4 significant genes) — likely
-     an underpowered comparison given the combined excitatory+inhibitory
-     category and relatively few neuronal nuclei captured (634 total). All
-     three tested synaptic genes (SNAP25, SYT1, RAB3A) trended in the
-     expected AD-down direction without reaching significance — consistent
-     with low power rather than absence of effect.
-   - Not everything matched prior expectation: APOE and CD74 in
-     astrocytes/microglia came out statistically significant but in the
-     *opposite* direction from the literature genes I checked against. Reported
-     as-is rather than adjusted to match expectation — AD transcriptional
-     effects on APOE are known to vary by brain region and cell subpopulation
-     across studies.
+     neurodegeneration literature, showing up on its own in real human
+     tissue.
+   - FKBP5 came up significant in three separate cell types independently
+     (oligodendrocyte, OPC, microglia). FKBP5 and glucocorticoid signaling
+     have documented links to tau pathology in AD.
+   - Neurons showed a much weaker signal (4 significant genes), probably
+     because excitatory and inhibitory neurons were combined into one
+     category and relatively few neuronal nuclei were captured overall (634
+     total). All three synaptic genes checked (SNAP25, SYT1, RAB3A) trended
+     in the expected AD-down direction without reaching significance, which
+     looks more like low power than an absent effect.
+   - Not everything lined up with prior expectation. APOE and CD74 in
+     astrocytes and microglia came out significant but in the opposite
+     direction from what the literature suggested going in. That's reported
+     as-is instead of adjusted to match expectation. AD's effect on APOE
+     transcription is known to vary by brain region and cell subpopulation
+     across different studies.
 
-4. **Donor-level disease classifier** (`scripts/run_classifier.py`) — features
-   built at the library level (cell-type composition + pseudobulk expression)
-   to avoid cell-level data leakage, evaluated with leave-one-library-out CV.
-   Achieved a perfect ROC-AUC of 1.0 — **but** a 500-permutation label-shuffle
-   test showed random labels achieve this same perfect separation about 8.6%
-   of the time given the same pipeline and n=6, meaning this result is **not
-   distinguishable from chance at conventional significance levels**. Reported
-   deliberately as a negative/inconclusive result: with 6 samples and
-   thousands of candidate features, a flexible classifier can perfectly
-   separate randomly shuffled groups too often to trust a raw accuracy number
-   without this kind of check.
+4. **Donor-level disease classifier** (`scripts/run_classifier.py`). Features
+   built at the library level (cell-type composition plus pseudobulk
+   expression) to avoid cell-level data leakage, evaluated with
+   leave-one-library-out cross-validation. This got a perfect ROC-AUC of 1.0.
+   But a 500-permutation label-shuffle test showed random labels hit that
+   same perfect separation about 8.6% of the time with the same pipeline and
+   n=6. So this result isn't distinguishable from chance at conventional
+   significance levels. It's reported here as a negative or inconclusive
+   result on purpose: with 6 samples and thousands of candidate features, a
+   flexible enough classifier can separate randomly shuffled groups often
+   enough that you can't trust a raw accuracy number without a check like
+   this.
 
 ## Reproducing this analysis
 
@@ -109,13 +113,13 @@ python scripts/run_classifier.py
 
 ## What this project demonstrates
 
-Cell-type annotation without a black-box reference model; awareness of and
-correction for pseudoreplication in single-cell differential expression;
-donor-level (not cell-level) ML evaluation with leakage-free feature
-selection; permutation-based significance testing appropriate for small
-sample sizes; and — throughout — reporting findings that contradicted
-expectations or came out statistically inconclusive, rather than only the
-ones that looked good.
+Cell-type annotation without relying on a black-box reference model.
+Recognizing and correcting for pseudoreplication in single-cell differential
+expression. Donor-level (not cell-level) ML evaluation with leakage-free
+feature selection. Permutation-based significance testing suited to small
+sample sizes. And throughout, reporting the findings that contradicted
+expectations or came out statistically inconclusive, not just the ones that
+looked good.
 
 ## License
 
